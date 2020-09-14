@@ -251,7 +251,7 @@ const HomePage = () => {
 
   return (
     <>
-      <h1>Redwood WebAuthn demo</h1>
+      <h1>WebAuthn demo</h1>
       <label htmlFor="username">
         Username
         <input

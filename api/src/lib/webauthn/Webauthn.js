@@ -115,14 +115,14 @@ export class Webauthn {
       coseKey.kty === COSEKeyType.EC2 &&
       coseKey.alg === COSEAlgorithmIdentifier.ECDSA_w_SHA256
     ) {
-      coseKey.x = coseStruct.get(-2)
-      coseKey.y = coseStruct.get(-3)
+      coseKey.x = coseStruct.get(-2).toString('base64')
+      coseKey.y = coseStruct.get(-3).toString('base64')
     } else if (
       coseKey.kty === COSEKeyType.RSA &&
       coseKey.alg === COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_using_SHA_256
     ) {
-      coseKey.n = coseStruct.get(-1)
-      coseKey.e = coseStruct.get(-2)
+      coseKey.n = coseStruct.get(-1).toString('base64')
+      coseKey.e = coseStruct.get(-2).toString('base64')
     }
 
     return coseKey
@@ -144,7 +144,11 @@ export class Webauthn {
   static COSEECDHAtoPKCS(parsedCoseKey) {
     const tag = Buffer.from([0x04])
 
-    return Buffer.concat([tag, parsedCoseKey.x, parsedCoseKey.y])
+    return Buffer.concat([
+      tag,
+      Buffer.from(parsedCoseKey.x, 'base64'),
+      Buffer.from(parsedCoseKey.y, 'base64'),
+    ])
   }
 
   /**
@@ -202,15 +206,14 @@ export class Webauthn {
    * @link https://geeklaunch.net/blog/what-does-my-rsa-public-key-actually-mean/
    */
   static RSAPublicKeyToPEM(publicKey) {
-    if (!Buffer.isBuffer(publicKey.n)) {
-      throw new Error('RSAPublicKeyToPEM: publicKey.n must be a buffer.')
-    }
+    const n = Buffer.from(publicKey.n, 'base64')
+    const e = Buffer.from(publicKey.e, 'base64')
 
-    if (publicKey.n.length !== 256) {
+    if (n.length !== 256) {
       throw new Error('RSAPublicKey Wrong key modulus length')
     }
 
-    if (publicKey.e.length !== 3) {
+    if (e.length !== 3) {
       throw new Error('RSAPublicKey Wrong key exponent length')
     }
 
@@ -254,9 +257,9 @@ export class Webauthn {
         '30820122300d06092a864886f70d01010105000382010f003082010a0282010100',
         'hex'
       ),
-      publicKey.n,
+      n,
       Buffer.from('0203', 'hex'),
-      publicKey.e
+      e,
     ])
 
     const b64cert = pkBuffer.toString('base64')

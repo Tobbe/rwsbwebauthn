@@ -2,6 +2,7 @@ const crypto = require('crypto')
 const cbor = require('cbor')
 
 import base64url from 'base64url'
+import { db } from 'src/lib/db'
 import { Webauthn } from 'src/lib/webauthn/Webauthn'
 import {
   PublicKeyCredentialType,
@@ -10,8 +11,6 @@ import {
   AttestationConveyancePreference,
   UserVerificationRequirement,
 } from 'src/lib/webauthn/Dictionaries'
-
-const db = {}
 
 function verifyAuthenticatorAttestationResponse(
   attestationObject,
@@ -166,34 +165,51 @@ function verifyAuthenticatorAttestationResponse(
   return response
 }
 
-export const prepCredentialCreation = ({ userName, displayName }) => {
+export const prepCredentialCreation = async ({ userName, displayName }) => {
   const challenge = base64url.encode(crypto.randomBytes(26))
   const userIdBuf = crypto.randomBytes(16)
+  // On a production system you don't want to do this. I just do it here to
+  // make it easier to find these keys, where this becomes part of the system
+  // key name
   userIdBuf[0] = 0xba
   userIdBuf[1] = 0xda
   userIdBuf[2] = 0x55
   const userId = base64url.encode(userIdBuf)
 
-  if (db[userName] && db[userName].registered) {
+  let dbUser = await db.user.findOne({ where: { userName } })
+
+  if (dbUser?.registered) {
     return {
       ok: false,
       message: `Username ${userName} already exists`,
     }
   }
 
-  db[userName] = {
-    name: displayName,
-    registered: false,
-    id: userId,
-    authenticators: [],
-    challenge,
-  }
+  dbUser = await db.user.upsert({
+    where: { userName },
+    create: {
+      userName,
+      name: displayName,
+      registered: false,
+      id: userId,
+      authenticators: [],
+      challenge,
+    },
+    update: {
+      userName,
+      name: displayName,
+      registered: false,
+      id: userId,
+      authenticators: [],
+      challenge,
+    },
+  })
 
   const opts = {
     challenge,
     rp: {
       name: 'Tobbe Inc',
-      id: 'localhost',
+      id: 'localhost', // TODO: Make dynamic
       icon: 'http://localhost:3000/favicon.png',
     },
     user: {
@@ -223,13 +239,15 @@ export const prepCredentialCreation = ({ userName, displayName }) => {
   }
 }
 
-export const verifyAndRegister = ({
+export const verifyAndRegister = async ({
   userName,
   clientDataJSON,
   attestationObject,
   id,
 }) => {
-  if (!db[userName]) {
+  let dbUser = await db.user.findOne({ where: { userName } })
+
+  if (!dbUser || !dbUser.challenge) {
     return {
       ok: false,
       message: `No ongoing creation for user ${userName}`,
@@ -255,11 +273,13 @@ export const verifyAndRegister = ({
   const { challenge, origin, type } = clientData
 
   console.log('challenge      ', challenge)
-  console.log('saved challenge', db[userName].challenge)
+  console.log('saved challenge', dbUser.challenge)
   console.log('id', id)
-  console.log('saved id', db[userName].credID)
+  if (dbUser.authenticators && dbUser.authenticators[0]) {
+    console.log('saved id', dbUser.authenticators[0].credID)
+  }
 
-  if (!challenge || challenge !== db[userName].challenge) {
+  if (!challenge || challenge !== dbUser.challenge) {
     return {
       ok: false,
       message: 'challenge missmatch',
@@ -289,8 +309,16 @@ export const verifyAndRegister = ({
     )
 
     if (result.verified) {
-      db[userName].authenticators.push(result.authrInfo)
-      db[userName].registered = true
+      const authenticators = dbUser.authenticators
+      authenticators.push(result.authrInfo)
+      await db.user.update({
+        data: {
+          ...dbUser,
+          registered: true,
+          authenticators,
+        },
+        where: { userName },
+      })
     }
   }
 
@@ -303,10 +331,10 @@ export const verifyAndRegister = ({
   }
 }
 
-export const prepCredentialGet = ({ userName }) => {
+export const prepCredentialGet = async ({ userName }) => {
   const challenge = base64url.encode(crypto.randomBytes(26))
 
-  const dbUser = db[userName]
+  let dbUser = await db.user.findOne({ where: { userName } })
 
   if (!dbUser || !dbUser.registered) {
     return {
@@ -315,9 +343,12 @@ export const prepCredentialGet = ({ userName }) => {
     }
   }
 
-  dbUser.challenge = challenge
-
   console.log('get-challenge', challenge)
+
+  await db.user.update({
+    data: { ...dbUser, challenge },
+    where: { userName },
+  })
 
   return {
     ok: true,
@@ -332,15 +363,15 @@ export const prepCredentialGet = ({ userName }) => {
   }
 }
 
-export const verifyAndLogin = ({
+export const verifyAndLogin = async ({
   userName,
   authenticatorData,
   clientDataJSON,
   signature,
 }) => {
-  const dbUser = db[userName]
+  let dbUser = await db.user.findOne({ where: { userName } })
 
-  if (!dbUser || !dbUser.registered) {
+  if (!dbUser?.registered) {
     return {
       ok: false,
       message: 'user not registered',
@@ -379,6 +410,7 @@ export const verifyAndLogin = ({
   console.log('authrData', authrDataStruct)
   console.log('rpId', base64url.encode(authrDataStruct.rpIdHash))
 
+  // TODO: Check proper counter
   if (authrDataStruct.counter <= /*dbUser...*/ 0) {
     return {
       ok: false,
@@ -441,7 +473,7 @@ export const verifyAndLogin = ({
   if (!verified) {
     return {
       ok: false,
-      message: 'Could not verify signature'
+      message: 'Could not verify signature',
     }
   }
 

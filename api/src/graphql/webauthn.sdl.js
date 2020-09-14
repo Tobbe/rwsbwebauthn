@@ -33,15 +33,43 @@ export const schema = gql`
     opts: PublicKeyCredentialCreationOptions
   }
 
+  type PublicKeyCredentialRequestOptions {
+    challenge: String!
+  }
+
+  type CredentialGetResponse {
+    ok: Boolean!
+    message: String
+    opts: PublicKeyCredentialRequestOptions
+  }
+
+  type VerifyAndLoginResponse {
+    ok: Boolean!
+    message: String
+  }
+
   type Mutation {
     prepCredentialCreation(
       userName: String!
       displayName: String!
     ): CredentialCreationResponse!
+
     verifyAndRegister(
       userName: String!
       attestationObject: String!
       clientDataJSON: String!
+      id: String!
     ): VerifyAndRegisterResponse!
+
+    prepCredentialGet(
+      userName: String!
+    ): CredentialGetResponse!
+
+    verifyAndLogin(
+      userName: String!
+      authenticatorData: String!
+      clientDataJSON: String!
+      signature: String!
+    ): VerifyAndLoginResponse!
   }
 `

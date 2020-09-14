@@ -8,6 +8,7 @@ import {
   COSEAlgorithmIdentifier,
   AuthDataFlags,
   AttestationConveyancePreference,
+  UserVerificationRequirement,
 } from 'src/lib/webauthn/Dictionaries'
 
 const db = {}
@@ -18,11 +19,8 @@ function verifyAuthenticatorAttestationResponse(
 ) {
   const attestationBuffer = base64url.toBuffer(attestationObject)
   const ctapCredResp = cbor.decodeFirstSync(attestationBuffer)
-  const authenticatorKeyBuffer = Buffer.from(attestationObject, 'base64')
-  const authenticatorKey = cbor.decodeFirstSync(authenticatorKeyBuffer)
 
   console.log('ctapCredResp', ctapCredResp)
-  console.log('authenticatorKey', authenticatorKey)
 
   const authrDataStruct = Webauthn.parseCredAuthData(ctapCredResp.authData)
 
@@ -33,13 +31,17 @@ function verifyAuthenticatorAttestationResponse(
   }
 
   const parsedCoseKey = Webauthn.parseCOSEKey(authrDataStruct.COSEPublicKey)
+  console.log('parsedCoseKey', parsedCoseKey)
 
   const response = { verified: false }
 
   if (ctapCredResp.fmt === 'none') {
     response.verified = true
   } else if (ctapCredResp.fmt === 'fido-u2f') {
-    const clientDataHash = Webauthn.hash(base64url.toBuffer(clientDataJSON))
+    const clientDataHash = Webauthn.hash(
+      'sha256',
+      base64url.toBuffer(clientDataJSON)
+    )
     const publicKey = Webauthn.COSEECDHAtoPKCS(parsedCoseKey)
     const reservedByte = Buffer.from([0x00])
     const signatureBase = Buffer.concat([
@@ -62,7 +64,7 @@ function verifyAuthenticatorAttestationResponse(
     ctapCredResp.fmt === 'packed' &&
     ctapCredResp.attStmt.hasOwnProperty('x5c')
   ) {
-    const clientDataHash = Webauthn.hash(
+    const clientDataHash = Webauthn.hash('sha256',
       base64url.toBuffer(clientDataJSON)
     )
     const signatureBase = Buffer.concat([
@@ -106,7 +108,10 @@ function verifyAuthenticatorAttestationResponse(
 */
     // Self signed
   } else if (ctapCredResp.fmt === 'packed') {
-    const clientDataHash = Webauthn.hash(base64url.toBuffer(clientDataJSON))
+    const clientDataHash = Webauthn.hash(
+      'sha256',
+      base64url.toBuffer(clientDataJSON)
+    )
     const signatureBase = Buffer.concat([ctapCredResp.authData, clientDataHash])
     const publicKey = Webauthn.COSEECDHAtoPKCS(parsedCoseKey)
     const PEMCertificate = Webauthn.ASN1toPEM(publicKey)
@@ -149,8 +154,8 @@ function verifyAuthenticatorAttestationResponse(
 
   if (response.verified) {
     response.authrInfo = {
-      fmt: 'fido-u2f',
-      publicKey: base64url.encode(JSON.stringify(parsedCoseKey)),
+      fmt: 'fido-u2f', // TODO: Always? Really?
+      publicKey: parsedCoseKey,
       counter: authrDataStruct.counter,
       credID: base64url.encode(authrDataStruct.credID),
     }
@@ -163,7 +168,11 @@ function verifyAuthenticatorAttestationResponse(
 
 export const prepCredentialCreation = ({ userName, displayName }) => {
   const challenge = base64url.encode(crypto.randomBytes(26))
-  const userId = base64url.encode(crypto.randomBytes(16))
+  const userIdBuf = crypto.randomBytes(16)
+  userIdBuf[0] = 0xba
+  userIdBuf[1] = 0xda
+  userIdBuf[2] = 0x55
+  const userId = base64url.encode(userIdBuf)
 
   if (db[userName] && db[userName].registered) {
     return {
@@ -218,6 +227,7 @@ export const verifyAndRegister = ({
   userName,
   clientDataJSON,
   attestationObject,
+  id,
 }) => {
   if (!db[userName]) {
     return {
@@ -246,6 +256,8 @@ export const verifyAndRegister = ({
 
   console.log('challenge      ', challenge)
   console.log('saved challenge', db[userName].challenge)
+  console.log('id', id)
+  console.log('saved id', db[userName].credID)
 
   if (!challenge || challenge !== db[userName].challenge) {
     return {
@@ -279,6 +291,157 @@ export const verifyAndRegister = ({
     if (result.verified) {
       db[userName].authenticators.push(result.authrInfo)
       db[userName].registered = true
+    }
+  }
+
+  console.log('===================================')
+  console.log('== Registration done             ==')
+  console.log('===================================')
+
+  return {
+    ok: true,
+  }
+}
+
+export const prepCredentialGet = ({ userName }) => {
+  const challenge = base64url.encode(crypto.randomBytes(26))
+
+  const dbUser = db[userName]
+
+  if (!dbUser || !dbUser.registered) {
+    return {
+      ok: false,
+      message: 'user not registered',
+    }
+  }
+
+  dbUser.challenge = challenge
+
+  console.log('get-challenge', challenge)
+
+  return {
+    ok: true,
+    opts: {
+      challenge,
+      // allowCredentials: [{
+      //   type: PublicKeyCredentialType.PUBLIC_KEY,
+
+      // }]
+      userVerification: UserVerificationRequirement.DISCOURAGED,
+    },
+  }
+}
+
+export const verifyAndLogin = ({
+  userName,
+  authenticatorData,
+  clientDataJSON,
+  signature,
+}) => {
+  const dbUser = db[userName]
+
+  if (!dbUser || !dbUser.registered) {
+    return {
+      ok: false,
+      message: 'user not registered',
+    }
+  }
+
+  console.log('dbUser', dbUser)
+
+  let clientData
+  let clientDataJSONStr
+
+  try {
+    const bufferarray = base64url.toBuffer(clientDataJSON)
+    const json = String.fromCharCode.apply(null, new Uint8Array(bufferarray))
+    clientDataJSONStr = json
+
+    console.log('json', json)
+    clientData = JSON.parse(json)
+  } catch (err) {
+    console.log('err', err)
+    return {
+      ok: false,
+      message: 'failed to decode client data',
+    }
+  }
+
+  console.log('clientData', clientData)
+  console.log('authenticatorData', authenticatorData)
+
+  const authDataBuffer = base64url.toBuffer(authenticatorData)
+  const authrDataStruct = Webauthn.parseCredAuthData(authDataBuffer)
+
+  console.log('authDataBuffer', authenticatorData)
+  console.log('authDataB64', Buffer.from(authenticatorData, 'base64'))
+
+  console.log('authrData', authrDataStruct)
+  console.log('rpId', base64url.encode(authrDataStruct.rpIdHash))
+
+  if (authrDataStruct.counter <= /*dbUser...*/ 0) {
+    return {
+      ok: false,
+      message: 'possibly cloned authenticator',
+    }
+  }
+
+  const sigBuffer = base64url.toBuffer(signature)
+  console.log('sigBuffer', sigBuffer)
+
+  // TODO: Support more keys by looping over all of them
+  const publicKey = dbUser.authenticators[0].publicKey
+
+  // TODO: Move this. Top of file at least
+  //const hostname = process.env.HOSTNAME || "localhost";
+  const hostname = 'localhost'
+
+  //Step 11: Verify that the rpIdHash in authData is the SHA-256 hash of the
+  //RP ID expected by the Relying Party.
+  if (!authrDataStruct.rpIdHash.equals(Webauthn.hash('sha256', hostname))) {
+    throw new Error(
+      'RPID hash does not match expected value: sha256(' + hostname + ')'
+    )
+  }
+
+  const clientDataHash = Webauthn.hash(
+    'sha256',
+    Buffer.from(clientDataJSON, 'base64')
+    // base64url.toBuffer(clientDataJSON)
+  )
+
+  // TODO: Try to just use authenticatorData
+  const signatureBase = Buffer.concat([
+    // authrDataStruct.rpIdHash,
+    // authrDataStruct.flagsBuf,
+    // authrDataStruct.counterBuf,
+    // Buffer.from(authenticatorData, 'base64'),
+    authDataBuffer,
+    clientDataHash,
+  ])
+
+  const verified = Webauthn.verifySignature(sigBuffer, signatureBase, publicKey)
+
+  // `signature` is authenticatorData concatinated with clientDataHash and
+  // then encrypted with the private key.
+
+  console.log('verified', verified)
+
+  const pemPublicKey = Webauthn.RSAPublicKeyToPEM(publicKey)
+
+  console.log(
+    'inline verify',
+    crypto
+      .createVerify('RSA-SHA256')
+      .update(authDataBuffer)
+      .update(crypto.createHash('sha256').update(clientDataJSONStr).digest())
+      .verify(pemPublicKey, sigBuffer)
+  )
+
+  if (!verified) {
+    return {
+      ok: false,
+      message: 'Could not verify signature'
     }
   }
 

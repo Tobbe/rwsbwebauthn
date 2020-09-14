@@ -1,8 +1,8 @@
 import base64url from 'base64url'
 import { useApolloClient } from '@redwoodjs/web'
 
-const PREP_MUTATION = gql`
-  mutation PrepMutation($userName: String!, $displayName: String!) {
+const PREP_CREATE_MUTATION = gql`
+  mutation PrepCreateMutation($userName: String!, $displayName: String!) {
     prepResponse: prepCredentialCreation(
       userName: $userName
       displayName: $displayName
@@ -30,15 +30,48 @@ const PREP_MUTATION = gql`
 `
 
 const VERIFY_AND_REGISTER_MUTATION = gql`
-  mutation VerifyAndRegistereMutation(
+  mutation VerifyAndRegisterMutation(
     $userName: String!
     $attestationObject: String!
     $clientDataJSON: String!
+    $id: String!
   ) {
     verifyAndRegisterResponse: verifyAndRegister(
       userName: $userName
       attestationObject: $attestationObject
       clientDataJSON: $clientDataJSON
+      id: $id
+    ) {
+      ok
+      message
+    }
+  }
+`
+
+const PREP_GET_MUTATION = gql`
+  mutation PrepGetMutation($userName: String!) {
+    prepResponse: prepCredentialGet(userName: $userName) {
+      ok
+      message
+      opts {
+        challenge
+      }
+    }
+  }
+`
+
+const VERIFY_AND_LOGIN_MUTATION = gql`
+  mutation VerifyAndLoginMutation(
+    $userName: String!
+    $authenticatorData: String!
+    $clientDataJSON: String!
+    $signature: String!
+  ) {
+    verifyAndLoginResponse: verifyAndLogin(
+      userName: $userName
+      authenticatorData: $authenticatorData
+      clientDataJSON: $clientDataJSON
+      signature: $signature
     ) {
       ok
       message
@@ -48,15 +81,17 @@ const VERIFY_AND_REGISTER_MUTATION = gql`
 
 const HomePage = () => {
   const apolloClient = useApolloClient()
-  const [data, setData] = React.useState()
   const [error, setError] = React.useState()
   const [showCreationError, setShowCreationError] = React.useState(false)
+  const [showLoginError, setShowLoginError] = React.useState(false)
   const [userName, setUserName] = React.useState('tobbelundberg')
+  const [registered, setRegistered] = React.useState(false)
+  const [loggedIn, setLoggedIn] = React.useState(false)
 
   const prepCredentialCreation = async () => {
     try {
       const { data } = await apolloClient.mutate({
-        mutation: PREP_MUTATION,
+        mutation: PREP_CREATE_MUTATION,
         variables: {
           userName,
           displayName: 'Tobbe Lundberg',
@@ -82,10 +117,62 @@ const HomePage = () => {
           attestationObject: base64url.encode(
             attestation.response.attestationObject
           ),
+          id: attestation.id,
         },
       })
       .then(({ data }) => {
         console.log('data', data)
+
+        if (data.verifyAndRegisterResponse.ok) {
+          setRegistered(true)
+        }
+
+        console.log('===================================')
+        console.log('== Registration done             ==')
+        console.log('===================================')
+      })
+      .catch((err) => {
+        console.log('err', err)
+      })
+  }
+
+  const prepCredentialGet = async () => {
+    try {
+      const { data } = await apolloClient.mutate({
+        mutation: PREP_GET_MUTATION,
+        variables: {
+          userName,
+          displayName: 'Tobbe Lundberg',
+        },
+      })
+
+      return data.prepResponse
+    } catch (err) {
+      return {
+        ok: false,
+        message: 'query error ' + err,
+      }
+    }
+  }
+
+  const verifyAndLogin = (credential) => {
+    apolloClient
+      .mutate({
+        mutation: VERIFY_AND_LOGIN_MUTATION,
+        variables: {
+          userName,
+          authenticatorData: base64url.encode(
+            credential.response.authenticatorData
+          ),
+          clientDataJSON: base64url.encode(credential.response.clientDataJSON),
+          signature: base64url.encode(credential.response.signature),
+        },
+      })
+      .then(({ data }) => {
+        console.log('data', data)
+        if (data.verifyAndLoginResponse.ok) {
+          setLoggedIn(true)
+        }
       })
       .catch((err) => {
         console.log('err', err)
@@ -93,6 +180,7 @@ const HomePage = () => {
   }
 
   const signup = async () => {
+    setError('');
     const { ok, message, opts } = await prepCredentialCreation()
 
     if (!ok) {
@@ -101,11 +189,9 @@ const HomePage = () => {
       return
     }
 
-    setData(opts)
-
     opts.challenge = base64url.toBuffer(opts.challenge)
     opts.user.id = base64url.toBuffer(opts.user.id)
-    console.log('opts', opts)
+    console.log('signup opts', opts)
 
     navigator.credentials
       .create({ publicKey: opts })
@@ -122,14 +208,47 @@ const HomePage = () => {
       })
   }
 
+  const login = async () => {
+    setError('')
+    const { ok, message, opts } = await prepCredentialGet()
+
+    if (!ok) {
+      console.log(message)
+      setError(message)
+      return
+    }
+
+    console.log('login opts', opts)
+
+    opts.challenge = base64url.toBuffer(opts.challenge)
+
+    navigator.credentials.get({ publicKey: opts })
+      .then((credential) => {
+        console.log('credential', credential)
+        verifyAndLogin(credential)
+      })
+      .catch((err) => {
+        console.log('get err', err)
+        setShowLoginError(true)
+        setError(err)
+      })
+  }
+
   return (
     <>
       <h1>HomePage</h1>
       <button onClick={signup}>Create Credentials</button>
+      <button onClick={login}>Login</button>
 
       {showCreationError && (
         <div>
           <p>You must setup 2FA to be able to use this service</p>
+        </div>
+      )}
+
+      {showLoginError && (
+        <div>
+          <p>Could not log you in</p>
         </div>
       )}
 
@@ -140,10 +259,18 @@ const HomePage = () => {
         </div>
       )}
 
-      {data && (
-        <pre>
-          <code>{JSON.stringify(data, null, '  ')}</code>
-        </pre>
+      {registered && (
+        <div>
+          <p>You have successfully registered an account for user {userName}</p>
+          <p>Try clicking the "Login" button</p>
+        </div>
+      )}
+
+      {loggedIn && (
+        <div>
+          <p>You have successfully logged in</p>
+          <p>Here is some secret text you need to be logged in to see</p>
+        </div>
       )}
     </>
   )

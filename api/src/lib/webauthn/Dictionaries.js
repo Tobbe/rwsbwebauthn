@@ -55,6 +55,11 @@ export const COSEAlgorithmIdentifier = {
   RSASSA_PKCS1_v1_5_using_SHA_256: -257,
 }
 
+export const COSEKeyType = {
+  EC2: 2,
+  RSA: 3,
+}
+
 /**
  * @link https://www.w3.org/TR/webauthn/#table-authData
  */

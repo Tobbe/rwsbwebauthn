@@ -209,8 +209,8 @@ export const prepCredentialCreation = async ({ userName, displayName }) => {
     challenge,
     rp: {
       name: 'Tobbe Inc',
-      id: 'localhost', // TODO: Make dynamic
-      icon: 'http://localhost:3000/favicon.png',
+      id: process.env.RP_HOST,
+      icon: 'https://rwsbwebauthn.netlify.app/favicon.png',
     },
     user: {
       id: userId,
@@ -286,7 +286,7 @@ export const verifyAndRegister = async ({
     }
   }
 
-  if (!origin || origin !== 'http://localhost:8910') {
+  if (origin !== 'http://localhost:8910' && origin !== 'https://rwsbwebauthn.netlify.app') {
     return {
       ok: false,
       message: 'origin missmatch',
@@ -424,13 +424,9 @@ export const verifyAndLogin = async ({
   // TODO: Support more keys by looping over all of them
   const publicKey = dbUser.authenticators[0].publicKey
 
-  // TODO: Move this. Top of file at least
-  //const hostname = process.env.HOSTNAME || "localhost";
-  const hostname = 'localhost'
-
   //Step 11: Verify that the rpIdHash in authData is the SHA-256 hash of the
   //RP ID expected by the Relying Party.
-  if (!authrDataStruct.rpIdHash.equals(Webauthn.hash('sha256', hostname))) {
+  if (!authrDataStruct.rpIdHash.equals(Webauthn.hash('sha256', process.env.RP_HOST))) {
     throw new Error(
       'RPID hash does not match expected value: sha256(' + hostname + ')'
     )

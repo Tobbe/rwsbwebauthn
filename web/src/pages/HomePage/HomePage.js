@@ -82,10 +82,11 @@ const VERIFY_AND_LOGIN_MUTATION = gql`
 const HomePage = () => {
   const apolloClient = useApolloClient()
   const [error, setError] = React.useState()
+  const [requiredError, setRequiredError] = React.useState(false)
   const [showCreationError, setShowCreationError] = React.useState(false)
   const [showLoginError, setShowLoginError] = React.useState(false)
-  const [userName, setUserName] = React.useState('tobbelundberg')
-  const [registered, setRegistered] = React.useState(false)
+  const [userName, setUserName] = React.useState('')
+  const [registered, setRegistered] = React.useState('')
   const [loggedIn, setLoggedIn] = React.useState(false)
 
   const prepCredentialCreation = async () => {
@@ -94,7 +95,7 @@ const HomePage = () => {
         mutation: PREP_CREATE_MUTATION,
         variables: {
           userName,
-          displayName: 'Tobbe Lundberg',
+          displayName: userName,
         },
       })
 
@@ -124,7 +125,7 @@ const HomePage = () => {
         console.log('data', data)
 
         if (data.verifyAndRegisterResponse.ok) {
-          setRegistered(true)
+          setRegistered(userName)
         }
 
         console.log('===================================')
@@ -171,7 +172,7 @@ const HomePage = () => {
       .then(({ data }) => {
         console.log('data', data)
         if (data.verifyAndLoginResponse.ok) {
-          setLoggedIn(true)
+          setLoggedIn(userName)
         }
       })
       .catch((err) => {
@@ -180,7 +181,15 @@ const HomePage = () => {
   }
 
   const signup = async () => {
-    setError('');
+    if (!userName) {
+      setRequiredError(true)
+      return
+    }
+
+    setError('')
+    setRegistered('')
+    setLoggedIn('')
+
     const { ok, message, opts } = await prepCredentialCreation()
 
     if (!ok) {
@@ -209,6 +218,11 @@ const HomePage = () => {
   }
 
   const login = async () => {
+    if (!userName) {
+      setRequiredError(true)
+      return
+    }
+
     setError('')
     const { ok, message, opts } = await prepCredentialGet()
 
@@ -222,7 +236,8 @@ const HomePage = () => {
 
     opts.challenge = base64url.toBuffer(opts.challenge)
 
-    navigator.credentials.get({ publicKey: opts })
+    navigator.credentials
+      .get({ publicKey: opts })
       .then((credential) => {
         console.log('credential', credential)
         verifyAndLogin(credential)
@@ -236,8 +251,23 @@ const HomePage = () => {
 
   return (
     <>
-      <h1>HomePage</h1>
-      <button onClick={signup}>Create Credentials</button>
+      <h1>WebAuthn demo</h1>
+      <label htmlFor="username">
+        Username
+        <input
+          type="text"
+          id="username"
+          name="username"
+          value={userName}
+          onChange={(e) => {
+            setRequiredError(false)
+            setUserName(e.target.value)
+          }}
+        />
+        {requiredError && <p className="error">Username is required</p>}
+      </label>
+
+      <button onClick={signup}>Signup</button>
       <button onClick={login}>Login</button>
 
       {showCreationError && (
@@ -253,7 +283,7 @@ const HomePage = () => {
       )}
 
       {error && (
-        <div style={{ color: 'red' }}>
+        <div className="error">
           <p>Error :(</p>
           <pre>{JSON.stringify(error, null, '  ')}</pre>
         </div>
@@ -261,14 +291,14 @@ const HomePage = () => {
 
       {registered && (
         <div>
-          <p>You have successfully registered an account for user {userName}</p>
+          <p>You have successfully registered an account for user {registered}</p>
           <p>Try clicking the "Login" button</p>
         </div>
       )}
 
       {loggedIn && (
         <div>
-          <p>You have successfully logged in</p>
+          <p>You have successfully logged in as {loggedIn}</p>
           <p>Here is some secret text you need to be logged in to see</p>
         </div>
       )}

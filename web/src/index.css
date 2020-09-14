@@ -1,0 +1,17 @@
+label {
+  display: block;
+  margin-bottom: .4em;
+}
+
+input[type=text] {
+  display: block;
+}
+
+button {
+  margin-right: .4em;
+  padding: .4em;
+}
+
+.error {
+  color: red;
+}
